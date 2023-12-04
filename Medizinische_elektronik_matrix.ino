@@ -1,194 +1,64 @@
-#include <FastLED.h>
+/*      display biopotential distribution on 16x16 rgb led matrix 
+        Projekt Medizinische Elektronik WS2023 HTWK Leipzig Prof. Laukner
+        Joris Bakker, Julius Zeng, Luis Klaus 20EIB
+        (c) Julius Zeng 04.12.2023
+*/      
+#include <avr/pgmspace.h>     //"write" and read from progmem
+#include <FastLED.h>          // official FastLed 3.6.0 release doesnt work (missing uno r4 minima support)
+                              // #1523 from facchinm (bit buggy but works) (04.12.2023)--> https://github.com/FastLED/FastLED/tree/0398b9a99901d00044de821ed86e8537995f561b 
+#define LED_PIN       5       //5
+#define BUTTON_PIN    2       //2
+#define COLOR_ORDER   GRB     //GRB     breaks if changed
+#define CHIPSET       WS2812B //WS2812B breaks if changed
+#define BRIGHTNESS    60      //60 normal, 5 testing, 255 maximum (too bright)
+#define MATRIX_WIDTH  16      //16      breaks if changed
+#define MATRIX_HEIGHT 16      //16      breaks if changed
+#define NUM_LEDS      (MATRIX_WIDTH * MATRIX_HEIGHT)
 
-#define LED_PIN  5
+//##### global constants #####
 
-#define COLOR_ORDER GRB
-#define CHIPSET     WS2811
+const int RefreshTime   = 50; //50 ms per frame --> 20FPS (Stable)  [mode 0(potential) --> ~47ms/frame] [mode 1(vector) --> ~11ms/frame]
 
-#define BRIGHTNESS 5 //5/60
+const double K          = 1;  //1 Lead-Field-Matrix constant
+const int rQ            = 5;  //5 radius of Q
+const int fI            = 40; //40 faktor of I
 
+const int TracerLength  = 100;//30 100
+const int ModeDefault   = 0;  //unused
+const unsigned long TimeDefault = 300000; //Time to change mode (to default) 300000 -> 5min, 60000 -> 1min 
 
-// Params for width and height
-const uint8_t kMatrixWidth = 16;
-const uint8_t kMatrixHeight = 16;
+//EKG Data radius,betrag
+const float Rad[350]    PROGMEM = {-0.1989096379, -0.1599311478, -0.1099585464, -0.04269711614, 0.05239506231, 0.1891771762, 0.3737521874, 0.5786085734, 0.7419007946, 0.823790367, 0.8326362674, 0.7972301336, 0.7427494824, 0.6838217857, 0.6256208843, 0.5662991542, 0.4975146476, 0.400800397, 0.2350551793, -0.08949824416, -0.6472523364, -1.16166403, -1.424373868, -1.533945144, -1.571001402, -1.572359622, -1.555712178, -1.530571817, -1.502457149, -1.474632801, -1.448938034, -1.426241222, -1.406715994, -1.390018499, -1.375409957, -1.36186314, -1.348193504, -1.333249254, -1.31616267, -1.296603027, -1.274911708, -1.252010989, -1.229092588, -1.207231594, -1.187105631, -1.168904202, -1.152392563, -1.137041582, -1.12215105, -1.106932052, -1.090540971, -1.072065211, -1.050450444, -1.024325029, -0.991580796, -0.9482442735, -0.8847661969, -0.7690693605, -0.3980156239, 1.420297627, 1.939144148, 2.075849095, 2.147822603, 2.196257825, 2.231925645, 2.258806306, 2.278919167, 2.293710578, 2.304463653, 2.312330092, 2.318199906, 2.322532592, 2.325243857, 2.325714338, 2.32294461, 2.315830554, 2.303493871, 2.285591459, 2.262543806, 2.23564844, 2.207060745, 2.179627493, 2.156560765, 2.14095904, 2.135229097, 2.140533653, 2.156456095, 2.18106914, 2.211452678, 2.244468766, 2.27745248, 2.30855882, 2.336732508, 2.361437733, 2.382313054, 2.39886251, 2.410242107, 2.415188304, 2.412154565, 2.399737767, 2.377425952, 2.346513145, 2.310734106, 2.27604887, 2.249420632, 2.237183031, 2.243833464, 2.27151877, 2.319874826, 2.385924275, 2.464245279, 2.547925235, 2.630397519, 2.707513276, 2.779303389, 2.852789225, 2.955825197, -2.98797756, -0.8443209114, -0.5026134727, -0.4215746239, -0.3836128885, -0.360168345, -0.3427737887, -0.3278278529, -0.3134319022, -0.2984113319, -0.2819147073, -0.2631973738, -0.2414569848, -0.2156499568, -0.1842116819, -0.1445344345, -0.09184361553, -0.01643397718, 0.1042313965, 0.3319173777, 0.8441835315, 1.690062784, 2.212866325, 2.441762454, 2.558415715, 2.62619056, 2.667639127, 2.691810389, 2.702305177, 2.699952681, 2.683728803, 2.651021675, 2.597848955, 2.520205645, 2.420405265, 2.33049337, 2.387302854, 2.917885578, -2.823464085, -2.68753061, -2.682031787, -2.709031468, -2.744258025, -2.781710815, -2.820054503, -2.858677607, -2.89619036, -2.929724936, -2.954846227, -2.966235149, -2.959073059, -2.930550496, -2.880711961, -2.812241135, -2.729470982, -2.637323973, -2.540779251, -2.444957989, -2.355374951, -2.277671791, -2.216466704, -2.173756674, -2.147949466, -2.134335386, -2.126763941, -2.119481182, -2.108235325, -2.09050481, -2.065226471, -2.032427521, -1.992948409, -1.94824387, -1.900148818, -1.85049991, -1.800611869, -1.750777206, -1.700065806, -1.646622418, -1.588415859, -1.524158811, -1.454041237, -1.380000806, -1.305419515, -1.234351547, -1.170586025, -1.116889983, -1.074613589, -1.043620253, -1.02240613, -1.008321357, -0.9979011664, -0.9873562635, -0.9732181898, -0.9530226529, -0.9258265262, -0.8923625625, -0.8547504556, -0.8158557928, -0.7785296506, -0.7449819979, -0.7164341813, -0.6930525156, -0.6740842905, -0.6581152138, -0.6433951443, -0.6281910058, -0.6111144534, -0.5913600875, -0.5688026788, -0.543942064, -0.5177318413, -0.4913570026, -0.4660242163, -0.4428037557, -0.4225315658, -0.40575877, -0.392729845, -0.383377051, -0.3773306263, -0.3739539017, -0.3724133848, -0.371783783, -0.3711717631, -0.3698305464, -0.3672389828, -0.3631329828, -0.357494832, -0.350517036, -0.3425583536, -0.3341034274, -0.3257290229, -0.3180732057, -0.3118006479, -0.307558127, -0.3059188546, -0.3073213206, -0.3120153405, -0.3200314703, -0.3311871514, -0.3451339611, -0.3614390603, -0.3796861754, -0.3995816608, -0.4210604122, -0.444404262, -0.4704172132, -0.5007766884, -0.5389233452, -0.5928957486, -0.6879214884, -0.9738820506, -2.8928313, 2.801674769, 2.659410461, 2.576720171, 2.51462337, 2.466097908, 2.43071966, 2.409007718, 2.400561688, 2.403696084, 2.41577521, 2.433736725, 2.454526817, 2.475369168, 2.493896325, 2.508200151, 2.516847922, 2.518891287, 2.513879366, 2.501877063, 2.483483895, 2.459846209, 2.432656472, 2.404137503, 2.377014809, 2.354480308, 2.340134469, 2.337847583, 2.351396855, 2.383646845, 2.43510169, 2.502182586, 2.576580539, 2.647206512, 2.704106877, 2.741406947, 2.757479468, 2.753267375, 2.730396764, 2.68978512, 2.630628044, 2.549344532, 2.437991718, 2.281841984, 2.057786487, 1.744729811, 1.367540961, 1.020438647, 0.7735952943, 0.6274630903, 0.5616312813, 0.5617528202, 0.6178565438, 0.7126854318, 0.8131987744, 0.8817675701, 0.8987988032, 0.8688024331, 0.8101238711, 0.7434537545, 0.6850882356, 0.6451576953, 0.6289304329, 0.6387379346, 0.6750572784, 0.7364349829, 0.8186657325, 0.9142213027, 1.013102571, 1.105263653, 1.183116056, 1.242485165, 1.281926609, 1.301404306, 1.30117335, 1.28116839, 1.240929752, 1.180103227, 1.099579832, 1.003093701, 0.898393799, 0.796572172};
+const float Bet[350]    PROGMEM = {0.0145930007, 0.01304520295, 0.01149339729, 0.009946086597, 0.008467302719, 0.007194251975, 0.006331034913, 0.006074319987, 0.006477998153, 0.007438539539, 0.008824076518, 0.01052230899, 0.01238975461, 0.01420962087, 0.01569844289, 0.01654925193, 0.01649329942, 0.0153785063, 0.01330451108, 0.0109866431, 0.01054321415, 0.01427183374, 0.02141956267, 0.03058580149, 0.04104573172, 0.05236773744, 0.06418833464, 0.07613097247, 0.08778418817, 0.09871525544, 0.1085091388, 0.1168219179, 0.1234357427, 0.1283023913, 0.1315650253, 0.1335520525, 0.1347420783, 0.1357036434, 0.1370169314, 0.1391867217, 0.1425573371, 0.1472420149, 0.1530800623, 0.1596326555, 0.1662211215, 0.172002678, 0.1760717801, 0.1775719592, 0.1758025951, 0.1703064679, 0.1609268211, 0.1478269481, 0.1314706252, 0.1125674302, 0.09199234775, 0.07069375878, 0.04961010806, 0.02964403623, 0.01212418747, 0.009105966423, 0.02181052054, 0.03357806214, 0.04333485193, 0.05111667476, 0.05711806196, 0.06158283789, 0.06476668733, 0.06691812882, 0.06826740948, 0.06901957589, 0.06935000761, 0.06940148228, 0.06928232692, 0.06906597377, 0.06879314758, 0.06847815016, 0.06811961695, 0.06771408402, 0.0672690509, 0.06681217047, 0.06639487394, 0.06609112622, 0.06599358053, 0.0662089658, 0.06685199522, 0.06803397865, 0.06984164864, 0.07230604918, 0.07536962909, 0.07886596738, 0.08252462071, 0.08600391336, 0.08894400901, 0.09102712844, 0.09203175166, 0.09187069012, 0.09060721115, 0.0884480903, 0.08571659818, 0.08281045708, 0.08014868414, 0.07810888075, 0.07695907745, 0.0768003951, 0.07754958429, 0.078983116, 0.08083238365, 0.08288727506, 0.08505486919, 0.08733033151, 0.08966442192, 0.09175862324, 0.09286700629, 0.09169016204, 0.0863983856, 0.07477309863, 0.05449256087, 0.02444984939, 0.027842668, 0.08654827615, 0.1627034257, 0.2542390862, 0.3588416193, 0.4727197101, 0.5905622532, 0.7057628956, 0.81084737, 0.898066275, 0.9600986583, 0.9907941453, 0.9858719058, 0.9434973735, 0.8646758899, 0.75344428, 0.6169372584, 0.4656964748, 0.3158401109, 0.2007350626, 0.1887450886, 0.2667602069, 0.3546111277, 0.4219027725, 0.460240088, 0.4685673839, 0.4496731977, 0.4088010465, 0.3526509855, 0.2884655731, 0.2231841704, 0.162711088, 0.1113369702, 0.07132505917, 0.04272393868, 0.02404202792, 0.01641265682, 0.02337542785, 0.03685644992, 0.05120454349, 0.0640171118, 0.07386815463, 0.08007579741, 0.08264408969, 0.08211454215, 0.07934432221, 0.07526692259, 0.07069317044, 0.0661963282, 0.06209358911, 0.05849736123, 0.05538964431, 0.0526868382, 0.0502905657, 0.04813119125, 0.04620085555, 0.04456334473, 0.04333427683, 0.04264150815, 0.0425857399, 0.04321414196, 0.04450363575, 0.04634655142, 0.04854472282, 0.05082744491, 0.05289835923, 0.05449776126, 0.05545819042, 0.05573565535, 0.05540940353, 0.05465363697, 0.05369222859, 0.05275086505, 0.05201932612, 0.05163078991, 0.05165848149, 0.05212596257, 0.05302571828, 0.05433880976, 0.05604630168, 0.05812514066, 0.06052995287, 0.0631734698, 0.06592242898, 0.06861765615, 0.07111230301, 0.07331184213, 0.07519922503, 0.07683662941, 0.07834607922, 0.0798796376, 0.08159179785, 0.08362110301, 0.08607906372, 0.08903972218, 0.0925271237, 0.09650651642, 0.1008891709, 0.1055553432, 0.110389336, 0.1153133191, 0.1203071004, 0.1254077052, 0.1306908025, 0.1362416927, 0.1421249623, 0.1483597473, 0.1549043006, 0.1616514909, 0.168436279, 0.1750556003, 0.181299025, 0.1869852763, 0.1919968014, 0.1963037339, 0.1999703543, 0.20314102, 0.2060073659, 0.2087631521, 0.2115563455, 0.2144490253, 0.217394062, 0.2202336013, 0.2227193132, 0.2245496645, 0.22541632, 0.2250506034, 0.223261635, 0.2199598688, 0.2151628095, 0.2089831277, 0.2016026011, 0.1932376672, 0.1841034485, 0.1743828107, 0.1642055764, 0.1536409253, 0.1427037028, 0.131373098, 0.1196200592, 0.1074380962, 0.09487116667, 0.08203257665, 0.0691104202, 0.05635775292, 0.04406885766, 0.03254600321, 0.02206410413, 0.01284828985, 0.005165717664, 0.002866985348, 0.007664476758, 0.01199353673, 0.01566099262, 0.01890980612, 0.02199412471, 0.02511939933, 0.02842061909, 0.03196063266, 0.03573962296, 0.03970802963, 0.04377882289, 0.04783835895, 0.05175645016, 0.05539628208, 0.05862434525, 0.06132006008, 0.06338434317, 0.06474607412, 0.06536545524, 0.06523377464, 0.06437005046, 0.06281614105, 0.06063264756, 0.05789784981, 0.0547108531, 0.05119835431, 0.04752243706, 0.04388480377, 0.04052062989, 0.03767319866, 0.03554271754, 0.03421762568, 0.03362266038, 0.03352400174, 0.03359326283, 0.03348979997, 0.03292409625, 0.03169398085, 0.02970199277, 0.0269622532, 0.02360077971, 0.01985116498, 0.01604859152, 0.01262402595, 0.01007040674, 0.008747608687, 0.00849515961, 0.008685356044, 0.00878148546, 0.008574640725, 0.008110836257, 0.007580203358, 0.007213647089, 0.007175738673, 0.007501529705, 0.008138102868, 0.009028524264, 0.01013763382, 0.01142290432, 0.01280743009, 0.01418525203, 0.01545157355, 0.01653789495, 0.01743716793, 0.0182103684, 0.01896921854, 0.01983522705, 0.02088757829, 0.02212496362, 0.02346197888, 0.02475795246, 0.02585869096, 0.02663368675, 0.02700217034, 0.02694842498, 0.02652797526, 0.02586422291, 0.02513200552, 0.0245229827, 0.02419304849, 0.02420801942};
 
+//##### global variables #####
 
-const bool    kMatrixVertical = false;
+int   Mode              = 0; // 0 = Potential, 1 = Vector
+bool  ModeChanged       = true;
+bool  NewRefresh        = true;
+unsigned long ModeTime  = 0;
+unsigned long Time      = 0;
 
-//##### Globale Konstanten #####
+int   Frame     = 0; //current frame
+float RadFrame  = 0;
+float BetFrame  = 0;
 
-//kosntate der Lead-Field-Matrix
-const double K    = 1;   //1
-//Dipol
-const double xQ1  = 5;   //5
-const double yQ1  = 4;    //0
-const double xQ2  = -5;  //-5
-const double yQ2  = -3;    //0
+float xQ1       = 0;
+float yQ1       = 0;
+double I1       = 0;
+float xQ2       = 0;
+float yQ2       = 0;
+double I2       = 0;
 
-double        I1  = -29;
-double        I2  = -10;
+int TracerNow   = 0;
+int LedLine;
 
-
-
-#define NUM_LEDS (kMatrixWidth * kMatrixHeight)
+//##### global arrays #####
 CRGB leds[NUM_LEDS];
-void setup() {
-  FastLED.addLeds<CHIPSET, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalSMD5050);
-  FastLED.setBrightness( BRIGHTNESS );
-  Serial.begin(9600);
-  Serial.println("end setup");
-}
+int TracerMemory[TracerLength]; //memoryarray of vector tracer
 
-
-
-/*byte LedWerte[NUM_LEDS]{
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00ffffff, 0x00000000, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00ffffff, 0x00ffffff, 0x00000000, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00ffffff, 0x00000000, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00000000, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00ffffff, 0x00ffffff, 0x00000000, 0x00000000, 0x00000000, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00000000, 
-  0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 
-  0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 
-  0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 
-  0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 
-  0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 
-  0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff, 0x00ffffff
-};
-
-static const long test_bitmap[] = {
-  0xff0000, 0xff0008, 0xff0029, 0x42004a, 0x19004a, 0x00004a, 0x00184a, 0x00394a, 0x004931, 0x004510, 0x004900, 0x214500, 0x4a4500, 0x4a2400, 0x4a0400, 0x4a0000, 
-  0x7b0000, 0x7b0019, 0x7b004a, 0x6b007b, 0x3a007b, 0x00007b, 0x002d7b, 0x00657b, 0x00795a, 0x007921, 0x087900, 0x427900, 0x7b7900, 0x7b4100, 0x7b0800, 0x7b0000, 
-  0xa50000, 0x9c0021, 0x9c006b, 0x94009c, 0x4a009c, 0x0000a5, 0x003d9c, 0x00869c, 0x00a273, 0x00a229, 0x10a200, 0x5aa200, 0xa59e00, 0x9c5500, 0xa50c00, 0x9c0000, 
-  0xb50000, 0xb50029, 0xb5007b, 0xa500b5, 0x5200b5, 0x0800b5, 0x0049b5, 0x009ab5, 0x00b684, 0x00b631, 0x19ba00, 0x6bb600, 0xb5b600, 0xb56500, 0xb51000, 0xb50000, 
-  0xce0000, 0xce0029, 0xce0084, 0xbd00ce, 0x6300ce, 0x0800ce, 0x0051ce, 0x00aace, 0x00ce94, 0x00ce3a, 0x19ce00, 0x73ce00, 0xceca00, 0xce7100, 0xce1400, 0xce0000, 
-  0xde0000, 0xde0031, 0xde0094, 0xce00de, 0x6b00de, 0x0800de, 0x0059de, 0x00bade, 0x00dfa5, 0x00df42, 0x21df00, 0x84df00, 0xdedb00, 0xde7900, 0xde1800, 0xde0000, 
-  0xf70000, 0xf70031, 0xf7009c, 0xde00f7, 0x7300f7, 0x0800f7, 0x0061f7, 0x00caf7, 0x00f3b5, 0x00f34a, 0x21f300, 0x8cf300, 0xf7ef00, 0xf78600, 0xf71c00, 0xf70000, 
-  0xff0000, 0xff003a, 0xff00a5, 0xe600ff, 0x7b00ff, 0x0800ff, 0x0065ff, 0x00d7ff, 0x00ffbd, 0x00ff4a, 0x21ff00, 0x94ff00, 0xfffb00, 0xff8e00, 0xff1c00, 0xff0000, 
-  0xff0000, 0xff003a, 0xff00a5, 0xe600ff, 0x7b00ff, 0x0800ff, 0x0065ff, 0x00d7ff, 0x00ffbd, 0x00ff4a, 0x21ff00, 0x94ff00, 0xfffb00, 0xff8a00, 0xff1c00, 0xff0000, 
-  0xff454a, 0xff455a, 0xff45ad, 0xe645ff, 0x8445ff, 0x4a45ff, 0x4279ff, 0x42dbff, 0x4affbd, 0x42ff63, 0x4aff42, 0x9cff42, 0xfffb42, 0xff9642, 0xff4d4a, 0xff4542, 
-  0xff7573, 0xff717b, 0xff75bd, 0xef75ff, 0x9c75ff, 0x7375ff, 0x7392ff, 0x73dfff, 0x73ffc5, 0x73ff84, 0x7bff73, 0xadff73, 0xfffb73, 0xffa673, 0xff7573, 0xff7173, 
-  0xff9294, 0xff9294, 0xff92c5, 0xef92ff, 0xad92ff, 0x9492ff, 0x94a6ff, 0x94e3ff, 0x94ffce, 0x94ff9c, 0x94ff94, 0xbdff94, 0xfffb94, 0xffb694, 0xff9694, 0xff9294, 
-  0xffaaad, 0xffaaad, 0xffaace, 0xefaaff, 0xbdaaff, 0xadaaff, 0xadbaff, 0xade7ff, 0xadffd6, 0xadffb5, 0xadffad, 0xc5ffad, 0xffffad, 0xffc6ad, 0xffaaad, 0xffaaad, 
-  0xffbebd, 0xffbec5, 0xffbede, 0xf7beff, 0xcebeff, 0xbdbeff, 0xbdcaff, 0xbdefff, 0xbdffde, 0xbdffc5, 0xbdffbd, 0xd6ffbd, 0xffffbd, 0xffd2bd, 0xffbebd, 0xffbebd, 
-  0xffcece, 0xffced6, 0xffcee6, 0xf7ceff, 0xdeceff, 0xceceff, 0xced7ff, 0xcef3ff, 0xceffe6, 0xceffd6, 0xceffce, 0xdeffce, 0xffffce, 0xffdfce, 0xffd2ce, 0xffd2ce, 
-  0xffdfde, 0xffdfde, 0xffdfef, 0xf7dfff, 0xe6dfff, 0xdedfff, 0xdee7ff, 0xdef7ff, 0xdeffef, 0xdeffe6, 0xdeffde, 0xe6ffde, 0xffffde, 0xffebde, 0xffdfde, 0xffdfde
-};*/
-
-// Demo that USES "XY" follows code below
-/*
-void loop()
-{
-    uint32_t ms = millis();
-    int32_t yHueDelta32 = ((int32_t)cos16( ms * (27/1) ) * (350 / kMatrixWidth));
-    int32_t xHueDelta32 = ((int32_t)cos16( ms * (39/1) ) * (310 / kMatrixHeight));
-    DrawOneFrame( ms / 65536, yHueDelta32 / 32768, xHueDelta32 / 32768);
-    if( ms < 5000 ) {
-      FastLED.setBrightness( scale8( BRIGHTNESS, (ms * 256) / 5000));
-    } else {
-      FastLED.setBrightness(BRIGHTNESS);
-    }
-    FastLED.show();
-}
-void loop()
-{
-  for (int x = 0; x < 255; x++)
-  {
-    SetFrame(x);
-    FastLED.show();
-  } 
-  while(1);
-}
-*/
-byte NewHue = 0;
-
-uint16_t XY( uint8_t x, uint8_t y){
-  uint16_t i;
-    if (kMatrixVertical == false) {
-      if( y & 0x01) {
-        // Odd rows run backwards
-        uint8_t reverseX = (kMatrixWidth - 1) - x;
-        i = (y * kMatrixWidth) + reverseX;
-      } else {
-        // Even rows run forwards
-        i = (y * kMatrixWidth) + x;
-      }
-    } else { // vertical positioning
-      if ( x & 0x01) {
-        i = kMatrixHeight * (kMatrixWidth - (x+1))+y;
-      } else {
-        i = kMatrixHeight * (kMatrixWidth - x) - (y+1);
-      }
-    }
-  return i;
-}
-
-void ClearMatrix(){
-  for (int x = 0; x < NUM_LEDS; x++)
-  {
-    leds[x];
-  }
-  leds[0];
-}
-
-void DrawOneFrame( byte startHue8, int8_t yHueDelta8, int8_t xHueDelta8){
-  byte lineStartHue = startHue8;
-  for( byte y = 0; y < kMatrixHeight; y++) {
-    lineStartHue += yHueDelta8;
-    byte pixelHue = lineStartHue;      
-    for( byte x = 0; x < kMatrixWidth; x++) {
-      pixelHue += xHueDelta8;
-      leds[ XY(x, y)]  = CHSV( pixelHue, 255, 255);
-    }
-  }
-}
-
-void Bitmap2frame(){
-  
-}
-
-void SetFrame(byte Hue){
-  for( byte y = 0; y < kMatrixHeight; y++) {     
-    for( byte x = 0; x < kMatrixWidth; x++) {
-      leds[ XY(x, y)]  = CHSV( Hue, 255, 255);
-    }
-  }
-}
-
-float Potential(byte m){ //returns Potential value of Output:leds[m]
-  return (L(m,1)* I1 + L(m,2)* I2);
-}
-float L(byte m, byte n){ //koeffizient Lead-Field-Matrix (m-ter Messpunkt[0-255] n-ter Quellstrom[0,1])
-  return (1/(K*4*PI*sqrt(sq(Xm(m)-Xn(n))+sq(Ym(m)-Yn(n)))));
-}
-double Xm(byte m){ //returns X value of Output:leds[m]
-  byte row = (m / kMatrixWidth);
-  if(row % 2){  //row is odd
-    return ((((((1+row)*kMatrixWidth)- m)-1)*2)-15);
-  }
-  else{         //row is even
-    return (((m - (row*kMatrixWidth))*2)-15);
-  }
-}
-double Ym(byte m){ //returns Y value of Output:leds[m]
-  if(0 <= m <= NUM_LEDS-1){
-    return (((m / kMatrixWidth)*2)-15);
-  }
-}
-byte Mxy(double x, double y){ //returns leds[m] value of coordinates
-  bool reverserow = false;
-  byte row    = (y/2)+8;
-  byte collum = (x/2)+8;
-  if(row % 2){  //row is odd and needs to be reversed
-    collum = kMatrixWidth - collum -1;
-  }
-  return (row * kMatrixWidth + collum);
-}
-
+//##### conversion functions #####
+//(coordinates)
 double Xn(byte n){ //returns X value of Dipollocation
   if(n == 1){
     return xQ1;
@@ -197,6 +67,7 @@ double Xn(byte n){ //returns X value of Dipollocation
     return xQ2;
   }
 }
+
 double Yn(byte n){ //returns Y value of Dipollocation
   if(n == 1){
     return yQ1;
@@ -206,7 +77,55 @@ double Yn(byte n){ //returns Y value of Dipollocation
   }
 }
 
-byte Value2Hue(float Value, double MaxValue){
+double Xm(byte m){ //returns X value of Output:leds[m]
+  byte row = (m / MATRIX_WIDTH);
+  if(row % 2){  //row is odd
+    return ((((((1+row)*MATRIX_WIDTH)- m)-1)*2)-15);
+  }
+  else{         //row is even
+    return (((m - (row*MATRIX_WIDTH))*2)-15);
+  }
+}
+
+double Ym(byte m){ //returns Y value of Output:leds[m]
+  if(0 <= m <= NUM_LEDS-1){
+    return (((m / MATRIX_WIDTH)*2)-15);
+  }
+}
+
+byte Mxy(double x, double y){ //returns leds[m] value of coordinates (reverse function of Xm/Ym)
+  bool reverserow = false;
+  byte row    = (y/2)+8;
+  byte collum = (x/2)+8;
+  if(row % 2){  //row is odd and needs to be reversed
+    collum = MATRIX_WIDTH - collum -1;
+  }
+  return (row * MATRIX_WIDTH + collum);
+}
+
+int full2cut(int input){ //converts full coordinates to cut coordinates (-15,-14,-13,-12,... --> -8,-7,-7,-6,...)
+  if (input % 2){ //input is odd
+    if(input > 0){
+      input++;
+    }
+    else{
+      input--;
+    }
+  }
+  return input / 2;
+}
+
+int cut2odd(int input){ //converts cut coordinates to odd coordinates (-8,-7,-6,... --> -15,-13,-11,...)
+  if(input > 0){
+    input = (input*2) - 1;
+  }
+  if(input < 0){
+    input = (input*2) + 1;
+  }
+  return input; 
+}
+//(pixel values) Hue:0red 96green 160blue | Sat:  0white 255color | Val(brighness: 0off 255full)
+byte Value2Hue(float Value, double MaxValue){ //converts potential value to pixel hue
   float NormValue = abs(Value)/MaxValue;
   if (NormValue > 1){
     NormValue = 1;
@@ -219,111 +138,259 @@ byte Value2Hue(float Value, double MaxValue){
   }
 }
 
-byte Value2HSValue(float Value, double MaxValue){
+byte Value2HSValue(float Value, double MaxValue){ //converts potential value to pixel HSValue
   float NormValue = abs(Value)/MaxValue;
     if (NormValue > 1){
       NormValue = 1;
     }
     return (NormValue*255);
 }
-  //Bresenham's_line_algorithm
-  
-void plotLine(double x0, double y0, double x1, double y1){
-  double dx = x1 - x0;
-  double dy = y1 - y0;
-  double  D = 2*dy - dx;
-  double  y = y0;
 
-  for(double x = x0 ; x <= x1; x++){
-        //plot(x, y)
-    leds[Mxy(x, y)] = 0xffffff;
-    if(D > 0){
-      y = y + 1;
-      D = D - 2*dx;
-    }
-    D = D + 2*dy;
-  }
+//##### calculation functions #####
+
+float L(byte m, byte n){ //koeffizient Lead-Field-Matrix (m-ter Messpunkt[0-255] n-ter Quellstrom[0,1])
+  return (1/(K*4*PI*sqrt(sq(Xm(m)-Xn(n))+sq(Ym(m)-Yn(n)))));
 }
-    
 
-void loop(){
-  bool returning = true;
-  bool first = false;
-  for(double y = -15 ; y <= 15; y++){
-    double x=y;
-    Serial.print("Mxy(");
-    Serial.print(x);
-    Serial.print(",");
-    Serial.print(y);
-    Serial.print(") = ");
-    Serial.println(Mxy(x,y));
+float Potential(byte m){ //returns Potential value of Output:leds[m]
+  return (L(m,1)* I1 + L(m,2)* I2);
+}
+
+//##### visualisation functions #####
+
+void plotLine(int x0, int y0, int x1, int y1, byte hue){ //plots line between 2 coordinates + hue
+  int  dx = full2cut(x1) - full2cut(x0); //int
+  int  dy = full2cut(y1) - full2cut(y0); //int
+  byte  NPixel;   //number of all Pixels per Line
+  byte  NSteps;   //number of steps per Line
+  bool    PlotX;
+  bool    UpNPixel = false;
+  bool    UpNSteps = false;
+
+  if(abs(dx) >= abs(dy)){  //x>y
+    //Serial.println("x>y Horizontal");
+    NPixel = abs(dx)+1; //+1
+    NSteps = abs(dy)+1; //+1
+    PlotX  = true;
+    if(dx > 0){UpNPixel = true;}
+    if(dy > 0){UpNSteps = true;}
   }
-  while (1) {
-    I2 = I1*-1;
-    
-    for (int x = 0; x < NUM_LEDS; x++){
-      //leds[x] = CHSV( (Potential(x)*1000), 255, 255);
-      leds[x] = CHSV(Value2Hue(Potential(x),0.2), 255, Value2HSValue(Potential(x),0.1));
-      if(first){
-        Serial.print(x);
-        Serial.print("Potential");
-        Serial.println(Potential(x));
+  else{                   //y>x
+    //Serial.println("y>x Vertikal");
+    NPixel = abs(dy)+1; //+1
+    NSteps = abs(dx)+1; //+1
+    PlotX  = false;
+    if(dx > 0){UpNSteps = true;}
+    if(dy > 0){UpNPixel = true;}
+  }
+  int  XNow = full2cut(x0); //int
+  int  YNow = full2cut(y0); //int
+  byte    PixelNow  = 1;
+  byte    StepNow   = 1;
+  double  RatioStart  = NPixel/NSteps;
+  double  RatioNow;
+  byte    StepNrm;  //normal lengh of step
+  byte    StepOdd;  //odd lengh of step
+  byte    StepLengh;
+  byte    NStepsNrm;//number of normal steps per Line
+  byte    NStepsOdd;//number of odd steps per Line
+  if(NPixel % NSteps){  //--> odd Steps required
+    StepNrm = NPixel/NSteps +1;
+    StepOdd = StepNrm -1;
+  }
+  else{                 //--> no odd steps
+    StepNrm = NPixel/NSteps;
+  }
+  for(byte Step = 1; Step <= NSteps; Step++){
+    if(PixelNow <= NPixel){  //redundant glaube
+      RatioNow = ((NPixel+1) - PixelNow)/(NSteps+1 - Step);
+      if((RatioNow/RatioStart)>=1){StepLengh = StepNrm;}
+      else{StepLengh = StepOdd;}
+      for(byte StepPixel = 1 ; StepPixel <= StepLengh; StepPixel++){
+        LedLine = Mxy(cut2odd(XNow), cut2odd(YNow));
+        leds[LedLine] = CHSV(hue, 255, 255);
+        if(PlotX){
+          if(UpNPixel){XNow++;}
+          else{XNow--;}
+        }
+        else{
+          if(UpNPixel){YNow++;}
+          else{YNow--;}
+        }
+        PixelNow++;
       }
     }
-    plotLine(xQ2,yQ2,xQ1,yQ1);
-    FastLED.show();
-    //delay(500);
-    if (returning){
-      I1 -= 1;
-      if (I1 <= -30) {
-        first = false;
-        returning = false;
-      }
+    if(PlotX){
+      if(UpNSteps){YNow++;}
+      else{YNow--;}
     }
     else{
-      I1 += 1;
-      if (I1 >= 30) {
-        returning = true;
-      }
+      if(UpNSteps){XNow++;}
+      else{XNow--;}
     }
+    StepNow++;
+    RatioNow = ((NPixel-PixelNow) / (NSteps-StepNow));
   }
 }
-  /*
-   * Serial.print(x);
-    Serial.print("Potential");
-    Serial.print(Potential(x));
-    Serial.print("Xm:");
-    Serial.print(Xm(x));
-    Serial.print("Ym:");
-    Serial.println(Ym(x));
-  //leds[0] = 0xffffff;
-  //leds[16] = 0xffffff;
-  //leds[255] = 0xffffff;
-  Serial.println(Ym(255));
-  Serial.println(Ym(215));
-  Serial.println(Ym(148));
-  Serial.println(Ym(128));
-  Serial.println(Ym(127));
-  Serial.println(Ym(27));
-  Serial.print("255:");
-  Serial.println(Xm(255));
-  Serial.print("236:");
-  Serial.println(Xm(236));
-  Serial.print("211:");
-  Serial.println(Xm(211));
-  Serial.print("169:");
-  Serial.println(Xm(169));
-  Serial.print("150:");
-  Serial.println(Xm(150));
-  Serial.print("107:");
-  Serial.println(Xm(107));
-  Serial.print("3%2:");
-  Serial.println(3%2);
-  Serial.print("1%2:");
-  Serial.println(1%2);
-  Serial.print("0%2:");
-  Serial.println(0%2);
 
+void vectorrad(float betrag, float radwinkel){ //plots vector of given value(betrag 0-1) and angle(rad) //rad = deg * (3.14159265359/180); 
+  double r = 100*betrag;
+  if(r >= 15){r=15;}
+  double xvec = r*cos(radwinkel);
+  double yvec = r*sin(radwinkel);
+  int xout = xvec;
+  int yout = yvec;
 
-  
-  */
+  int xstart = 1;
+  int ystart = 1;
+  if(xvec < 0){
+    xstart = -1;
+  }
+  if(yvec < 0){
+    ystart = -1;
+  }
+  plotLine(xstart,ystart,xout,yout,Value2Hue(betrag,0.7));
+}
+
+void tracer(int Led, int hue, int maxval){ //plots fading tracer of leds[m]  maxval is the maxbrightness of tracerled TracerMemory 
+  TracerMemory[TracerNow] = Led;
+  int TracerMemNow = TracerNow;
+  if(maxval <=0 || maxval > 255){
+    maxval = 255;
+  }
+  for(int n = TracerLength; n > 0; n--){
+    TracerMemNow--;
+    if(TracerMemNow < 0){
+      TracerMemNow = TracerLength - 1;
+    }
+    double multiplyer = n; //double/float needed
+    int val = ((maxval - 50) * (multiplyer/TracerLength)) + 50; //-+ offset 
+    leds[TracerMemory[TracerMemNow]]  = CHSV( hue, 255, val);
+  }
+  TracerNow++;
+  if(TracerNow >= TracerLength){
+    TracerNow = 0;
+  }
+}
+
+void TracerReset(){ //sets TracerMemory to 0,0
+  for(int n = 0; n < TracerLength; n++){
+    TracerMemory[n] = Mxy(0,0);
+  }
+  LedLine = Mxy(0,0);
+}
+
+void ShowVector(bool ShowTracer){ //displays vector (with tracer--> true)
+  RadFrame = pgm_read_float(&(Rad[Frame]));
+  BetFrame = pgm_read_float(&(Bet[Frame]));
+
+  ClearMatrix();
+  if(ShowTracer){
+    tracer(LedLine,160,100);
+  }
+  vectorrad(BetFrame, RadFrame);
+  FastLED.show();
+}
+
+void ShowPotential(){ //displays potential
+  RadFrame = pgm_read_float(&(Rad[Frame]));
+  BetFrame = pgm_read_float(&(Bet[Frame]));
+
+  xQ1 = rQ * sin(RadFrame);
+  xQ2 = xQ1 * -1;
+  yQ1 = rQ * cos(RadFrame);
+  yQ2 = yQ1 * -1;
+  I1  = fI * BetFrame;
+  I2  = I1 * -1;
+  float PotFrame;
+    
+  for (int x = 0; x < NUM_LEDS; x++){
+    PotFrame = Potential(x);
+    leds[x] = CHSV(Value2Hue(PotFrame,0.15), 255, Value2HSValue(PotFrame,0.05));
+  } 
+  //vectorrad(BetFrame, RadFrame);
+  FastLED.show();
+}
+
+void NextFrame(int add){ //1   advances to the next frame (input is added to current frame number) 
+  Frame = Frame +add;
+  if(Frame >= 350){
+    Frame = 0;
+  }
+}
+
+void ClearMatrix(){ //sets all matrix values to 0
+  for (int x = 0; x < NUM_LEDS; x++)
+  {
+    leds[x]= 0x000000;;
+  }
+}
+
+void ChangeMode(){ //changes current mode if button is pressed or timed
+  if(digitalRead(2) == 0){
+    ModeChanged = true;
+    Mode++;
+    if(Mode >= 2){
+      Mode = 0;
+    }
+    delay(500);
+  }
+  if(millis() - ModeTime >= TimeDefault){
+    ModeChanged = true;
+    Mode++;
+    if(Mode >= 2){
+      Mode = 0;
+    }
+    delay(500);
+  }
+}
+
+void setup() {
+  pinMode(2, INPUT_PULLUP);
+  FastLED.addLeds<CHIPSET, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalSMD5050);
+  FastLED.setBrightness( BRIGHTNESS );
+  //Serial.begin(9600);
+  //Serial.println("end setup");
+}
+
+void loop(){
+  while(Mode == 0){ //potential
+    if(ModeChanged){
+      ModeTime = millis();
+      ModeChanged = false;
+    }
+    if(NewRefresh){
+      Time = millis();
+
+      ShowPotential();
+      NextFrame(1);
+
+      //Serial.println(millis() - Time); // Time to process and show Frame
+      NewRefresh = false;
+    }
+    if(millis() - Time >= RefreshTime){
+      NewRefresh = true;
+    }
+    ChangeMode();
+  }
+  while(Mode == 1){ //vector
+    if(ModeChanged){
+      TracerReset();
+      ModeTime = millis();
+      ModeChanged = false;
+    }
+    if(NewRefresh){
+      Time = millis();
+
+      ShowVector(true);
+      NextFrame(1);
+
+      //Serial.println(millis() - Time); // Time to process and show Frame
+      NewRefresh = false;
+    }
+    if(millis() - Time >= RefreshTime){
+      NewRefresh = true;
+    }
+    ChangeMode();
+  }
+}
